@@ -314,7 +314,7 @@ async function runTrackedAttempt(canaryTimingSchedule,
             attemptState.holeCleanupVerified && trackingEnded;
         await emitStage(lightCleanupComplete
             ? "Temporary handles closed; fspSrv and candidate storage remain open."
-            : "Cleanup incomplete; fspSrv and candidate storage remain open.");
+            : "Retained by design: fspSrv and candidate storage remain open.");
     } else if (attemptState.pidPromotionVerified) {
         const cleanupComplete = attemptState.cleanupVerified &&
             attemptState.holeCleanupVerified && trackingEnded &&

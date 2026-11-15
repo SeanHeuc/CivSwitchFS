@@ -198,7 +198,6 @@ function standaloneEntry(payload) {
                 const network_str = '';
                 try {
                     await eval(${JSON.stringify(payloadWithSourceName)});
-                    await log('Executed successfully');
                 }
                 catch (error) {
                     const position = error && (error.lineNumber || error.columnNumber)
@@ -263,7 +262,10 @@ function injectPersistedVisuals(core, visualPrelude) {
 function injectPayload(core, payload) {
     if (core.split(BOOTSTRAP_ANCHOR).length !== 2)
         throw new Error("Bootstrap CivSwitch non reconnu: anchor ambiguous");
-    return core.replace(BOOTSTRAP_ANCHOR, standaloneEntry(payload) + BOOTSTRAP_ANCHOR);
+    // The persistent save is offline: after the autoloader finishes, do not
+    // fall through to the TCP loader's "network down" wait loop.
+    return core.replace(BOOTSTRAP_ANCHOR,
+        standaloneEntry(payload) + "\n            return;\n" + BOOTSTRAP_ANCHOR);
 }
 
 function licenseBlock(label, license) {

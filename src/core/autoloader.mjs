@@ -42,6 +42,7 @@ export async function run(input) {
         try {
             await kaihen.boot();
             await emitFastStage("AUTOLOADER: HEN: boot sequence complete");
+            await emitFastStage("AUTOLOADER: kaiHEN installation complete. You can close Civ7 now.");
         } catch (error) {
             await emitFastStage("AUTOLOADER: HEN: auto failed: " +
                 (error && error.message ? error.message : error));
