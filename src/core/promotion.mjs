@@ -659,6 +659,10 @@ export async function runPromotionAndUserStorageProbe(input) {
         }
         await log("PROMOTION: retained endpoint reread all three original objects exactly");
 
+        if (config.skipPidPromotion) {
+            outcome.skipPidPromotion = true;
+            await log("PROMOTION: PID promotion skipped; normal fsp-srv identity retained");
+        } else {
         // -- Phase 3: PID promotion writes -----------------------------------
         for (var wi = 0; wi < fields.length; wi++) {
             var target = fields[wi];
@@ -769,12 +773,29 @@ export async function runPromotionAndUserStorageProbe(input) {
         await log("PROMOTION: User storage test passed; promoted session bound " +
             "as globalThis.fspSrv");
 
+        }
+        async function closeUserStorage() {
+            if (contentFsHandle) {
+                try { closeHandle(contentFsHandle); } catch (error) {}
+                contentFsHandle = 0;
+            }
+            for (const objectId of contentFsObjectIds) {
+                try { closeDomainObject(domainSession.handle, objectId); }
+                catch (error) {}
+            }
+            contentFsObjectIds = [];
+            outcome.contentFsHandleClosed = true;
+            outcome.contentFsDomainObjectClosed = true;
+            await log("PROMOTION: User storage closed before downstream start");
+        }
+
         // -- Phase 6: Run dependent stages while elevated --------------------
         if (typeof input.onElevated === "function") {
             outcome.downstreamStarted = true;
             downstreamSafeToRestore = false;
             await log("PROMOTION: running dependent stages before restoring PID fields");
             outcome.downstream = await input.onElevated({
+                noPromotion: !!config.skipPidPromotion,
                 domainSession,
                 savedHandle: input.savedHandle || addressCopy.savedHandle,
                 candidateHandle,
@@ -787,6 +808,8 @@ export async function runPromotionAndUserStorageProbe(input) {
                     retainedWriteMemoryUnverified(address, bytes,
                         stageName || "dependent FS one-shot write"),
                 compareWriteFsMemory,
+                releaseRetainedEndpoint: retireRetainedEndpoint,
+                closeUserStorage: closeUserStorage,
                 identityObjects: fields.map(function(field) {
                     return {name: field.name, object: field.object,
                         objectSize: field.objectSize, pidOffset: field.pidOffset,

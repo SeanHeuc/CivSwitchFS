@@ -56,6 +56,7 @@ export function createFspIdentityConfig() {
   var heldRoles = ["canary", "filler0", "filler1", "guard0", "guard1"];
   var overlapRoles = throughRoles.concat(heldRoles);
   return {
+    skipPidPromotion: false,
     SLOT_SIZE,
     WAVE_READ_SIZE,
     DIRTY_FILE_SIZE,

@@ -38,6 +38,7 @@ import {
 } from "./core/steps/cleanup.mjs";
 import {createFspIdentityHelpers} from "./core/helpers/index.mjs";
 import {runPromotionStep} from "./core/promotion.mjs";
+import {run as runAutoloaderStage} from "./core/autoloader.mjs";
 import {
     formatAddressResults,
     formatAliasResult,
@@ -996,7 +997,8 @@ async function runPayload(attemptState, allowTimingAdjustments = true) {
         domainSession: handles.domainSession,
         helpers, rootStageVerified: address.rootStageVerified,
         verifiedIdentityTargets: address.verifiedIdentityTargets,
-        workerStateSafe: address.addressCopy.workerStateSafe
+        workerStateSafe: address.addressCopy.workerStateSafe,
+        onElevated: runAutoloaderStage
     });
 
     cleanupWorkerStateSafe = promotion?.workerStateSafe === true;

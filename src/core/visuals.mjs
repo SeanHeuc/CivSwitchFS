@@ -6,6 +6,7 @@ const LEGACY_LOGGER_KEY = "__CIVSWITCHFS_VISUAL_LOGGER__";
 const LEGACY_STATE_KEY = "__CIVSWITCHFS_VISUAL_LOG_STATE__";
 const BETTER_CONSOLE_FORWARDER = "__civSwitchBetterConsoleForwarder";
 const LOG_LABEL = "CivSwitchFS logs";
+const STATUS_KEY = "__CIVSWITCHFS_STATUS_BAR__";
 
 export function installVisualLogPatch() {
     const api = globalThis.__CIVSWITCH_CORE_API__;
@@ -37,6 +38,7 @@ function installVisualLogPatchFor(api) {
         const consoleLog = betterConsole.log;
         const forwardLog = function (...args) {
             forwardPersistedLog(args);
+            updateStatus(document, args[0]);
             return Reflect.apply(consoleLog, betterConsole, args);
         };
         forwardLog[BETTER_CONSOLE_FORWARDER] = true;
@@ -110,7 +112,10 @@ function installVisualLogPatchFor(api) {
         forwardPersistedLog(callArgs);
 
         const task = state.logQueue.then(async () => {
-            const followTail = isNearBottom(state.output);
+            // This surface is a live console, not a user-scrolled document:
+            // always keep its newest row visible. The old isNearBottom gate
+            // stopped following as soon as a burst of lines got ahead of the
+            // scroll position, which hid the final rows on the console.
             const pendingLog = Reflect.apply(originalLog, callThis, callArgs);
             // The persisted bootstrap's first logger is lazy: its first call
             // replaces window.log with the underlying <pre> implementation.
@@ -124,7 +129,8 @@ function installVisualLogPatchFor(api) {
             const result = await pendingLog;
 
             addLogRows(logOutput, document, message, timestamp, state.compact);
-            if (followTail) logOutput.scrollTop = logOutput.scrollHeight;
+            updateStatus(document, message);
+            scrollToTail(logOutput);
             return result;
         });
 
@@ -145,7 +151,47 @@ function forwardPersistedLog(args) {
     } catch (error) {}
 }
 
+// The game console clips the last rows of its log surface. Keep the newest
+// two messages in a fixed strip so the current stage is always visible.
+function ensureStatusBar(document) {
+    let status = globalThis[STATUS_KEY];
+    if (status && status.isConnected) return status;
+    status = document.createElement("div");
+    status.setAttribute("aria-label", "CivSwitchFS status");
+    Object.assign(status.style, {
+        position: "fixed",
+        top: "0",
+        left: "0",
+        right: "0",
+        zIndex: "2147483647",
+        boxSizing: "border-box",
+        padding: "5px 14px",
+        background: "rgba(20, 22, 26, 0.96)",
+        color: "#9bcaff",
+        fontFamily: "Consolas, 'Liberation Mono', monospace",
+        fontSize: "14px",
+        lineHeight: "1.35",
+        borderBottom: "1px solid #3a3f4b",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        pointerEvents: "none"
+    });
+    document.body.appendChild(status);
+    globalThis[STATUS_KEY] = status;
+    return status;
+}
+
+function updateStatus(document, message) {
+    const lines = String(message).replace(/\r\n?/g, "\n").split("\n")
+        .filter(line => line.length);
+    const tail = lines.slice(-2).join("  |  ");
+    ensureStatusBar(document).textContent = tail;
+}
+
 export async function clearVisualLog() {
+    const status = globalThis[STATUS_KEY];
+    if (status) status.textContent = "";
     const betterConsole = globalThis.civConsole;
     if (betterConsole && typeof betterConsole.clear === "function") {
         betterConsole.clear();
@@ -172,6 +218,17 @@ function removeLegacyOutput(document) {
 function formatTimestamp(date) {
     const twoDigits = value => String(value).padStart(2, "0");
     const threeDigits = value => String(value).padStart(3, "0");
+    // The CFS/FS runtime may report UTC while the console UI uses the user's
+    // system timezone.  The game-side loader records the console's offset
+    // (minutes west of UTC) before evaluating this payload.
+    const offset = Number(globalThis.__AUTOLOADER_TZ_OFFSET);
+    if (Number.isFinite(offset) && offset !== 0) {
+        const local = new Date(date.getTime() - offset * 60000);
+        return twoDigits(local.getUTCHours()) + ":" +
+            twoDigits(local.getUTCMinutes()) + ":" +
+            twoDigits(local.getUTCSeconds()) + "." +
+            threeDigits(local.getUTCMilliseconds());
+    }
     return twoDigits(date.getHours()) + ":" +
         twoDigits(date.getMinutes()) + ":" +
         twoDigits(date.getSeconds()) + "." +
@@ -192,7 +249,7 @@ function applyConsoleStyle(output, document) {
         zIndex: "2147483647",
         boxSizing: "border-box",
         margin: "0",
-        padding: "10px 0 22px",
+        padding: "40px 0 160px",
         overflowY: "auto",
         overflowX: "hidden",
         fontFamily: "Consolas, 'Liberation Mono', monospace",
@@ -223,7 +280,7 @@ function applyLegacyConsoleStyle(output, document) {
         zIndex: "2147483647",
         boxSizing: "border-box",
         margin: "0",
-        padding: "10px 14px 22px",
+        padding: "40px 14px 160px",
         overflowY: "auto",
         overflowX: "hidden",
         fontFamily: "Consolas, 'Liberation Mono', monospace",
@@ -293,6 +350,25 @@ function addLogRows(output, document, message, timestamp, compact) {
         row.appendChild(stamp);
         row.appendChild(content);
         output.appendChild(row);
+    }
+}
+
+/// Pins the log to its newest row. Setting scrollTop immediately can use the
+/// previous layout height: on the console a log line appended in the same
+/// frame then stays one or two rows below the visible area. Scroll once now
+/// and again after the browser has committed the new row.
+function scrollToTail(output) {
+    const scroll = () => {
+        output.scrollTop = output.scrollHeight;
+    };
+    scroll();
+    if (typeof globalThis.requestAnimationFrame === "function") {
+        globalThis.requestAnimationFrame(() => {
+            scroll();
+            globalThis.requestAnimationFrame(scroll);
+        });
+    } else {
+        globalThis.setTimeout(scroll, 0);
     }
 }
 
