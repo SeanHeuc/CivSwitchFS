@@ -17,6 +17,11 @@ window.__cfsSaveCodec = (function () {
         'eval(__cfsCode)">';
     var hiddenStart = '<span style="display:none">';
     var hiddenEnd = '</span>';
+    // Fixed-size timing record segment appended after the stage hex
+    // (installed zeroed = no record). The runtime payload reads it before
+    // the FS race and patches the hex in place after a successful run.
+    // The stager only collects XSSP segments, so this is inert at boot.
+    var slotSegment = ' XCFG:1:' + new Array(121).join('0');
     var maximum = 4 * 1024 * 1024;
 
     function ascii(text) {
@@ -92,6 +97,8 @@ window.__cfsSaveCodec = (function () {
         var start = prefix + (hidden ? hiddenStart : '') + 'XSSP:0:';
         var end = hidden ? hiddenEnd : '';
         var hex = value.slice(start.length, value.length - end.length);
+        var slotMatch = / XCFG:1:[0-9a-f]{120}$/.exec(hex);
+        if (slotMatch) hex = hex.slice(0, hex.length - slotMatch[0].length);
         if (
             value.indexOf(start) !== 0 ||
             (end && value.slice(-end.length) !== end) ||
@@ -125,6 +132,7 @@ window.__cfsSaveCodec = (function () {
                 (hideText ? hiddenStart : '') +
                 'XSSP:0:' +
                 hex.join('') +
+                slotSegment +
                 (hideText ? hiddenEnd : '')
         );
         var size =
