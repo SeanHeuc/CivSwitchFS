@@ -37,6 +37,7 @@ import {
   cleanupScratchAndHandles
 } from "./core/steps/cleanup.mjs";
 import {createFspIdentityHelpers} from "./core/helpers/index.mjs";
+import {loadRecordedSchedule} from "./core/timing-slot.mjs";
 import {runPromotionStep} from "./core/promotion.mjs";
 import {run as runAutoloaderStage} from "./core/autoloader.mjs";
 import {
@@ -94,7 +95,17 @@ export async function run() {
 
     try {
         let canaryTimingSchedule = null;
+        // If a previous successful run recorded its winning schedule in
+        // the save, start from it instead of the stock table. A missing
+        // or invalid record leaves the stock behavior untouched.
+        const recordedTiming = await loadRecordedSchedule();
+        if (recordedTiming) {
+            canaryTimingSchedule = recordedTiming.schedule;
+            await emitStage("TIMING: recorded schedule loaded (win " +
+                recordedTiming.wins + "); starting from it.");
+        }
         let attemptLimit = BASE_ATTEMPTS;
+        let wedgeAnnounced = false;
         let positiveAttemptsTotal = 0;
         let positiveWindowsTotal = 0;
 
@@ -105,6 +116,12 @@ export async function run() {
                 attempt < MAX_TOTAL_ATTEMPTS);
             positiveAttemptsTotal += result.positiveAttempts || 0;
             positiveWindowsTotal += result.positiveWindows || 0;
+
+            if (globalThis.__IPC_WEDGED && !wedgeAnnounced) {
+                wedgeAnnounced = true;
+                await emitStage("File-system service stopped responding; " +
+                    "the run was stopped safely.");
+            }
 
             if (result.permissionProven) {
                 if (result.promotionRestored && result.safeToRetry) {
@@ -988,6 +1005,11 @@ async function runPayload(attemptState, allowTimingAdjustments = true) {
 
     await emitStage("Checking access to user storage...");
     cleanupWorkerStateSafe = false;
+
+    // The schedule in effect now is the one that won the canary campaign;
+    // hand it to the autoloader stage, which records it into the save.
+    globalThis.__AUTOLOADER_WIN_SCHEDULE =
+        copyCanaryTimingSchedule(attemptState.canaryTimingSchedule);
 
     const promotion = await runPromotionStep({
         config, addressPlan: address.addressPlan,

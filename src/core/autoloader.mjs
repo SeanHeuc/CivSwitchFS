@@ -6,6 +6,7 @@
 import {runFs} from "./autoloader-fs.mjs";
 import {createKaihen} from "./autoloader-kaihen.mjs";
 import {emitFastStage} from "./log-stage.mjs";
+import {storeRecordedSchedule} from "./timing-slot.mjs";
 
 const BUILD_UTC = "2026-11-15T14:53:49Z";
 
@@ -25,6 +26,18 @@ export async function run(input) {
     await emitFastStage("AUTOLOADER: BUILD: " + BUILD_UTC);
     // Stage 1: CFS (FS elevation, gate and PM/FS handles).
     const fs = await runFs(input);
+    // FS success is the milestone the timing record exists for: store the
+    // winning schedule into the save so the next boot starts from it.
+    // Best-effort; a failed record never affects this run.
+    try {
+        const winSchedule = globalThis.__AUTOLOADER_WIN_SCHEDULE;
+        if (winSchedule) {
+            const stored = await storeRecordedSchedule(winSchedule);
+            await emitFastStage(stored
+                ? "AUTOLOADER: TIMING: winning schedule recorded for the next boot"
+                : "AUTOLOADER: TIMING: schedule record skipped (save not writable)");
+        }
+    } catch (ignored) {}
     const kaihen = createKaihen(fs);
     // Stage 2: prepare kaiHEN (SD layout, cached HEN files, RO donor).
     // A missing SD card or a missing kaiHEN file must not kill the FS bridge;
