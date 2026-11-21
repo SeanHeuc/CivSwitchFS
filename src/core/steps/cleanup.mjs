@@ -1,10 +1,12 @@
 import coreRuntime from "../runtime.mjs";
+import {emitVerboseStage} from "../log-stage.mjs";
 
 const {
   closeHandle,
   hex32,
   ipcCommitChecked,
   ipcDeleteDirectoryRecursivelyChecked,
+  ipcFileInvalidate,
   log
 } = coreRuntime;
 
@@ -18,8 +20,9 @@ export async function retireCandidateCacheAndClose({
   retireRetainedEndpoint,
   workerStateSafe,
 }) {
-    // S21: Retire the synthetic cache entry before closing the candidate.
+    // S21: Verify the synthetic cache entry, retiring it only if needed.
     let candidateCacheRetired = false;
+    let candidateCacheRetirementSkipped = false;
     var candidateCloseSafe = workerStateSafe;
     var workersQuiesced = workerStateSafe === true;
     var stateSafe = workerStateSafe === true;
@@ -97,6 +100,7 @@ export async function retireCandidateCacheAndClose({
         stateSafe = workersQuiesced;
         candidateCloseSafe = retirement.ok && workersQuiesced;
         candidateCacheRetired = retirement.candidateCacheRetired;
+        candidateCacheRetirementSkipped = retirement.retirementSkipped === true;
         if (!retirement.ok)
             retirementFailureReason = "candidate-cache-retirement-failed";
         addressCopy = {...retirement.addressCopy, candidateCacheRetired};
@@ -123,7 +127,9 @@ export async function retireCandidateCacheAndClose({
         await log("CACHE: candidate close skipped (worker/cache state unsafe)");
     }
 
-  return {ok: true, addressCopy, candidateCacheRetired, candidateHandle,
+  return {ok: true, addressCopy, candidateCacheRetired,
+      candidateCacheRetirementSkipped,
+      candidateHandle,
       workerStateSafe: stateSafe, workersQuiesced, candidateCloseResult,
       failureReason: retirementFailureReason};
 }
@@ -147,7 +153,8 @@ export async function cleanupScratchAndHandles({
   temporaryHandle,
   triggerHandle,
   workerStateSafe,
-  keepDomainSessionOpen = false
+  keepDomainSessionOpen = false,
+  dirtyFileSize = 0
 }) {
     // S22: Cleanup. Report a failed or skipped cleanup as unsafe to retry.
     var cleanupAttempted = false;
@@ -185,6 +192,18 @@ export async function cleanupScratchAndHandles({
             countExpectedHandle(domainSession.handle);
         countExpectedHandle(rootSession);
         cleanupAttempted = true;
+        var cacheInvalidateResult = null;
+        if (dirtyFileSize > 0 && SCRATCH_DIR) {
+            try {
+                cacheInvalidateResult = ipcFileInvalidate(
+                    savedHandle, SCRATCH_DIR + "/big8", dirtyFileSize);
+            } catch (error) {
+                cacheInvalidateResult = "throw:" + String(error);
+            }
+            await emitVerboseStage("CLEANUP: cache invalidate " + SCRATCH_DIR +
+                "/big8 result=" + (typeof cacheInvalidateResult === "number"
+                    ? hex32(cacheInvalidateResult) : cacheInvalidateResult));
+        }
         await log("CLEANUP: removing " + SCRATCH_DIR + " and committing");
         try {
             var deleteStatus = ipcDeleteDirectoryRecursivelyChecked(

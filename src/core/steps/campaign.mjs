@@ -19,7 +19,7 @@ const {
   writeDirtyData
 } = coreRuntime;
 
-export const WINDOW_RATE_THRESHOLD = 0.5;
+export const WINDOW_RATE_THRESHOLD = 0.8;
 const TIMING_NOISE_FLOOR_US = 75;
 const TIMING_MAX_STEP_US = 250;
 const TIMING_MAX_DRIFT_US = 1000;
@@ -314,7 +314,8 @@ export async function runControlWaveLoop({
         for (const change of changes) {
             timingAdjustments.push({
                 afterWave: wavesJoined,
-                reason: timingSource + "-window-rate-below-50-percent",
+                reason: timingSource + "-window-rate-below-" +
+                    Math.round(WINDOW_RATE_THRESHOLD * 100) + "-percent",
                 source: timingSource,
                 ...change
             });

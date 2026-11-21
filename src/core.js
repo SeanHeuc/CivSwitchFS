@@ -1067,7 +1067,8 @@ async function runPayload(attemptState, allowTimingAdjustments = true) {
             storageHandle: handles.storageHandle,
             temporaryHandle: 0,
             triggerHandle: handles.triggerHandle,
-            workerStateSafe: promotion.workerStateSafe
+            workerStateSafe: promotion.workerStateSafe,
+            dirtyFileSize: config.DIRTY_FILE_SIZE
         });
 
         attemptState.promotionRetained = true;
@@ -1145,7 +1146,8 @@ async function runPayload(attemptState, allowTimingAdjustments = true) {
         storageHandle: handles.storageHandle,
         temporaryHandle: 0,
         triggerHandle: handles.triggerHandle,
-        workerStateSafe: retired.workerStateSafe
+        workerStateSafe: retired.workerStateSafe,
+        dirtyFileSize: config.DIRTY_FILE_SIZE
     });
 
     await emitVerboseStage(formatCleanupResult(cleanup, retired.workerStateSafe));
